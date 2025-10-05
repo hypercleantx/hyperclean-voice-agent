@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: hyperclean-voice-agent
+    env: node
+    plan: starter
+    region: oregon
+    buildCommand: |
+      tr -d '\r' < HyperClean_VoiceAgent_Stack.zip > setup.sh
+      bash setup.sh
+      npm install --prefix HyperClean_VoiceAgent_Stack
+    startCommand: bash -c "cd HyperClean_VoiceAgent_Stack && node server.js"
+    healthCheckPath: "/healthz"
+    autoDeploy: true
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: STREAM_SHARED_SECRET
+        sync: false
+      - key: OPENAI_REALTIME_MODEL
+        value: gpt-4o-realtime-preview-2024-12-17
+      - key: VOICE
+        value: alloy
+      - key: SYSTEM_PROMPT
+        value: "You are the friendly AI concierge and sales agent for HyperClean TX."
