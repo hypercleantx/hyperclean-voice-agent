@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# Builds the complete HyperClean Voice Agent folder & zip
+
+mkdir -p HyperClean_VoiceAgent_Stack/lib
+mkdir -p HyperClean_VoiceAgent_Stack/prompts
+mkdir -p HyperClean_VoiceAgent_Stack/knowledge
+
+# ---------- package.json ----------
+cat > HyperClean_VoiceAgent_Stack/package.json <<'EOF'
+{
+  "name": "hyperclean-voice-agent",
+  "version": "1.0.0",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0",
+    "alawmulaw": "^5.0.1",
+    "dotenv": "^16.4.5",
+    "uuid": "^9.0.1"
+  }
+}
+EOF
+
+# ---------- render.yaml ----------
+cat > HyperClean_VoiceAgent_Stack/render.yaml <<'EOF'
+services:
+  - type: web
+    name: hyperclean-voice-agent
+    env: node
+    plan: starter
+    region: oregon
+    buildCommand: "npm install"
+    startCommand: "node server.js"
+    healthCheckPath: "/healthz"
+    autoDeploy: true
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: STREAM_SHARED_SECRET
+        sync: false
+      - key: OPENAI_REALTIME_MODEL
+        value: gpt-4o-realtime-preview-2024-12-17
+      - key: VOICE
+        value: alloy
+      - key: SYSTEM_PROMPT
+        value: "You are the friendly AI concierge and sales agent for HyperClean TX."
+EOF
+
+# ---------- .env.example ----------
+cat > HyperClean_VoiceAgent_Stack/.env.example <<'EOF'
+OPENAI_API_KEY=sk-...
+OPENAI_REALTIME_MODEL=gpt-4o-realtime-preview-2024-12-17
+VOICE=alloy
+STREAM_SHARED_SECRET=replace-me
+PORT=10000
+SYSTEM_PROMPT_FILE=prompts/system_prompt.txt
+EOF
+
+# ---------- lib/audio.js ----------
+cat > HyperClean_VoiceAgent_Stack/lib/audio.js <<'EOF'
+const { mulaw } = require('alawmulaw');
+function muLawToPCM16LE(mu){const pcm=mulaw.decode(mu);return Buffer.from(pcm.buffer);}
+function pcm16LEToMuLaw(pcm){const i16=new Int16Array(pcm.buffer,pcm.byteOffset,pcm.byteLength/2);const mu=mulaw.encode(i16);return Buffer.from(mu.buffer);}
+module.exports={muLawToPCM16LE,pcm16LEToMuLaw};
+EOF
+
+# ---------- lib/twilio.js ----------
+cat > HyperClean_VoiceAgent_Stack/lib/twilio.js <<'EOF'
+function sendMedia(ws,streamSid,b64){ws.send(JSON.stringify({event:'media',streamSid,media:{payload:b64}}));}
+function sendMark(ws,streamSid,name){ws.send(JSON.stringify({event:'mark',streamSid,mark:{name}}));}
+function sendClear(ws,streamSid){ws.send(JSON.stringify({event:'clear',streamSid}));}
+module.exports={sendMedia,sendMark,sendClear};
+EOF
+
+# ---------- prompts/system_prompt.txt ----------
+cat > HyperClean_VoiceAgent_Stack/prompts/system_prompt.txt <<'EOF'
+You are the HyperClean TX voice agent. Speak warmly, clearly, and with purpose.
+Core traits: empathy, clarity, adaptability, honesty, problem-solving.
+Never mention being an AI. Keep replies under 3 sentences.
+If user sounds upset, empathize first, then offer help.
+EOF
+
+# ---------- prompts/sales_voice.txt ----------
+cat > HyperClean_VoiceAgent_Stack/prompts/sales_voice.txt <<'EOF'
+Confident, upbeat, persuasive. Ask discovery questions, handle objections gently.
+Smile in your voice. Build trust, not pressure.
+EOF
+
+# ---------- prompts/support_voice.txt ----------
+cat > HyperClean_VoiceAgent_Stack/prompts/support_voice.txt <<'EOF'
+Calm, patient, reassuring. Acknowledge frustration, explain fixes clearly.
+EOF
+
+# ---------- prompts/recruiting_voice.txt ----------
+cat > HyperClean_VoiceAgent_Stack/prompts/recruiting_voice.txt <<'EOF'
+Friendly HR tone. Guide candidates step-by-step and encourage applications.
+EOF
+
+# ---------- prompts/chat_agent.txt ----------
+cat > HyperClean_VoiceAgent_Stack/prompts/chat_agent.txt <<'EOF'
+Conversational website chat assistant. Be brief, friendly, and accurate.
+EOF
+
+# ---------- prompts/business_context.txt ----------
+cat > HyperClean_VoiceAgent_Stack/prompts/business_context.txt <<'EOF'
+[Insert the dual-city, no-refund, compliance business bio text you approved here.]
+EOF
+
+# ---------- knowledge/hyperclean.json ----------
+cat > HyperClean_VoiceAgent_Stack/knowledge/hyperclean.json <<'EOF'
+{
+  "company":"HyperClean TX",
+  "markets":["Houston","Dallas"],
+  "languages":["English","Spanish"],
+  "services":{
+    "Residential":{"priceRange":"$139–$289","description":"Deep and routine cleaning"},
+    "Airbnb":{"priceRange":"$75–$145","description":"Turnovers with laundry and restock"},
+    "MoveInOut":{"priceRange":"Custom Quote","description":"Detailed prep or exit cleans"}
+  },
+  "policies":{
+    "refund":"No refunds except rare cases; re-clean guarantee within 24h.",
+    "cancellation":"Cancel/reschedule at least 24h in advance.",
+    "safety":"May refuse service if unsafe or unsanitary.",
+    "damageClaims":"Report within 48h with photo proof."
+  },
+  "contact":{"phone":"(832) 784-8994","website":"https://hypercleantx.com"},
+  "values":["Reliability","Transparency","Cultural Fluency","Quality","Trust"]
+}
+EOF
+
+# ---------- README ----------
+cat > HyperClean_VoiceAgent_Stack/README.md <<'EOF'
+# HyperClean Voice Agent Stack
+Deploys a Node server for Twilio ↔ OpenAI Realtime voice streaming.
+1. Upload to GitHub.
+2. Connect to Render as a Web Service.
+3. Add environment variables from `.env.example`.
+4. After deploy, copy HTTPS/WSS URLs into your Apps Script `SET_STREAM_PROPS__RUN_ONCE()`.
+EOF
+
+# ---------- server.js ----------
+cat > HyperClean_VoiceAgent_Stack/server.js <<'EOF'
+require('dotenv').config();
+const express=require('express'),http=require('http'),WebSocket=require('ws');
+const {v4:uuidv4}=require('uuid');
+const {muLawToPCM16LE,pcm16LEToMuLaw}=require('./lib/audio');
+const {sendMedia,sendMark,sendClear}=require('./lib/twilio');
+const fs=require('fs');
+const app=express();app.get('/healthz',(_q,res)=>res.send('ok'));
+const server=http.createServer(app);const wss=new WebSocket.Server({noServer:true});
+function connectOpenAI({voice,instructions}){const url=`wss://api.openai.com/v1/realtime?model=${process.env.OPENAI_REALTIME_MODEL}`;const ws=new WebSocket(url,{headers:{Authorization:`Bearer ${process.env.OPENAI_API_KEY}`,'OpenAI-Beta':'realtime=v1'}});ws.on('open',()=>{ws.send(JSON.stringify({type:'session.update',session:{voice, instructions, input_audio_format:'pcm16', input_audio_transcription:{model:'whisper-1'}, turn_detection:{type:'server_vad',threshold:0.5,silence_duration_ms:200,create_response:true}}}))});return ws;}
+wss.on('connection',twilioWS=>{let streamSid=null,openaiWS=null;
+twilioWS.on('message',msg=>{let d;try{d=JSON.parse(msg);}catch{return;}
+switch(d.event){
+case'start':streamSid=d.start.streamSid;
+const p=d.start.customParameters||{};if(p.secret!==process.env.STREAM_SHARED_SECRET){twilioWS.close();return;}
+const voice=p.voice||process.env.VOICE||'alloy';
+const biz=fs.readFileSync('./prompts/business_context.txt','utf8');
+const instructions=(process.env.SYSTEM_PROMPT||'')+'\n'+biz;
+openaiWS=connectOpenAI({voice,instructions});
+openaiWS.on('message',e=>{let ev;try{ev=JSON.parse(e);}catch{return;}
+if(ev.type==='response.audio.delta'&&ev.delta){const pcm=Buffer.from(ev.delta,'base64');const mu=pcm16LEToMuLaw(pcm).toString('base64');sendMedia(twilioWS,streamSid,mu);}
+if(ev.type==='response.done'){sendMark(twilioWS,streamSid,uuidv4());}});
+break;
+case'media':if(!openaiWS)return;const ulaw=Buffer.from(d.media.payload,'base64');const pcm=muLawToPCM16LE(ulaw);openaiWS.send(JSON.stringify({type:'input_audio_buffer.append',audio:pcm.toString('base64')}));break;
+case'stop':twilioWS.close();openaiWS&&openaiWS.close();break;}});});
+server.on('upgrade',(req,sock,head)=>{if(req.url==='/stream'){wss.handleUpgrade(req,sock,head,ws=>wss.emit('connection',ws,req));}else sock.destroy();});
+server.listen(process.env.PORT||10000);
+EOF
+
+zip -r HyperClean_VoiceAgent_Stack.zip HyperClean_VoiceAgent_Stack
+echo "✅ Created HyperClean_VoiceAgent_Stack.zip"
+EOF
