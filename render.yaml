@@ -2,7 +2,7 @@ services:
   - type: web
     name: hyperclean-voice-agent
     env: node
-    plan: starter
+    plan: free
     region: oregon
     buildCommand: |
       tr -d '\r' < HyperClean_VoiceAgent_Stack.zip > setup.sh
