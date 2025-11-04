@@ -22,3 +22,5 @@ services:
         value: alloy
       - key: SYSTEM_PROMPT
         value: "You are the friendly AI concierge and sales agent for HyperClean TX."
+  - key: SYSTEM_PROMPT_FILE
+    value: prompts/system_prompt.txt
